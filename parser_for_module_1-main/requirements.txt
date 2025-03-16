@@ -8,3 +8,6 @@ python_docx==1.1.2
 Requests==2.32.3
 tabula_py==2.10.0
 lxml
+pytest
+pytest-cov
+requests_mock
