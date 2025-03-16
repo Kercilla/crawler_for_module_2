@@ -1,6 +1,6 @@
 import pytest
 import requests_mock
-from WebPageProcessor import WebPageProcessor
+from parsers.parser_html import WebPageProcessor 
 
 @pytest.fixture
 def mock_html():
