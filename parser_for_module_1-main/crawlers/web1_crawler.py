@@ -1,107 +1,151 @@
-import os
-import requests
-from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
-from collections import deque
-from parsers.parser_html import WebPageProcessor 
-from config import DOMAINS_WEB1, ROBOTS_TXT_CHECK
+# crawlers/web1_crawler.py
+import aiohttp
+import asyncio
+from urllib.parse import urlparse, urljoin
+from parsers.parser_html import WebPageProcessor
+from utils.robots_checker import check_robots_txt_async
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Web1Crawler:
-    def __init__(self, start_url, domain):
+    def __init__(self, start_url, domain, max_pages=1000, max_depth=3, 
+                 delay=0.5, concurrency=10):
         self.start_url = start_url
         self.domain = domain
+        self.max_pages = max_pages
+        self.max_depth = max_depth
+        self.delay = delay
+        self.concurrency = concurrency
+        self.queue = asyncio.Queue()
         self.visited = set()
-        self.queue = deque([start_url])
         self.stats = {
             "total_pages": 0,
+            "total_links": 0,
             "internal_pages": 0,
             "broken_pages": 0,
             "subdomains": set(),
-            "external_links": set(),
-            "files": {"pdf": 0, "doc": 0, "docx": 0},
-            "file_links": set()
+            "external_links": {"total": 0, "unique": set()},
+            "files": {"pdf": 0, "doc": 0, "docx": 0, "total": 0, "unique": set()},
+            "error_links": []
         }
+        self.session = None
+        self.semaphore = asyncio.Semaphore(concurrency)
 
-    def is_internal(self, url):
-        return self.domain in url
+    async def __aenter__(self):
+        connector = aiohttp.TCPConnector(use_dns_cache=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            self.session = aiohttp.ClientSession()
+        return self
 
-    def check_robots_txt(self, url):
-        # Проверка robots.txt (упрощенная)
-        robots_url = urljoin(url, "/robots.txt")
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.session.close()
+
+    async def check_robots_permission(self, url):
+        return await check_robots_txt_async(url, self.domain, self.session)
+
+    async def fetch_page(self, url):
         try:
-            response = requests.get(robots_url, timeout=5)
-            return "Disallow:" not in response.text
-        except:
-            return True  # Если robots.txt недоступен, считаем доступ разрешенным
-
-    def parse_page(self, url):
-        if ROBOTS_TXT_CHECK and not self.check_robots_txt(url):
-            return None
-
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code >= 400:
-                self.stats["broken_pages"] += 1
-                return None
-        except:
+            async with self.semaphore:
+                await asyncio.sleep(self.delay)
+                if not await self.check_robots_permission(url):
+                    logger.warning(f"Доступ запрещен robots.txt: {url}")
+                    return None
+                async with self.session.get(url, timeout=10) as response:
+                    response.raise_for_status()
+                    return await response.text()
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке {url}: {str(e)}")
             self.stats["broken_pages"] += 1
+            self.stats["error_links"].append(url)
             return None
 
-        # Используем ваш HTML-парсер для извлечения текста
-        parsed_content = WebPageProcessor(response.text)
-        return parsed_content, response.text
-
-    def extract_links(self, soup, current_url):
-        links = []
-        for a_tag in soup.find_all('a', href=True):
-            full_url = urljoin(current_url, a_tag['href'])
+    async def process_page(self, url, depth):
+        html = await self.fetch_page(url)
+        if not html:
+            return []
+        
+        processor = WebPageProcessor(url, html)
+        self.stats["total_pages"] += 1
+        self.stats["internal_pages"] += 1
+        
+        new_links = []
+        for link_info in processor.links:
+            full_url = urljoin(self.start_url, link_info["url"])
             parsed = urlparse(full_url)
             
-            # Обработка файлов
-            if full_url.endswith('.pdf'):
-                self.stats["files"]["pdf"] += 1
-                self.stats["file_links"].add(full_url)
-            elif full_url.endswith('.docx'):
-                self.stats["files"]["docx"] += 1
-                self.stats["file_links"].add(full_url)
-            elif full_url.endswith('.doc'):
-                self.stats["files"]["doc"] += 1
-                self.stats["file_links"].add(full_url)
+            self.stats["total_links"] += 1
             
-            # Обработка поддоменов и внешних ссылок
-            if parsed.netloc.endswith(self.domain):
-                links.append(full_url)
-                self.stats["subdomains"].add(parsed.netloc)
+            if full_url.endswith(('.pdf', '.doc', '.docx')):
+                self._process_file_link(full_url)
+                continue
+            
+            if self.domain in parsed.netloc:
+                self._process_internal_link(parsed, full_url, depth, new_links)
             else:
-                self.stats["external_links"].add(parsed.netloc)
-        return links
+                self._process_external_link(parsed.netloc)
 
-    def crawl(self):
-        while self.queue:
-            url = self.queue.popleft()
-            if url in self.visited:
+        return new_links
+
+    def _process_file_link(self, url):
+        ext = url.split('.')[-1]
+        if ext in ['pdf', 'doc', 'docx']:
+            self.stats["files"][ext] += 1
+            self.stats["files"]["total"] += 1
+            self.stats["files"]["unique"].add(url)
+
+    def _process_internal_link(self, parsed, url, depth, new_links):
+        if parsed.netloc not in self.stats["subdomains"]:
+            self.stats["subdomains"].add(parsed.netloc)
+        if depth < self.max_depth and url not in self.visited:
+            new_links.append((url, depth+1))
+
+    def _process_external_link(self, netloc):
+        self.stats["external_links"]["total"] += 1
+        self.stats["external_links"]["unique"].add(netloc)
+
+    async def worker(self):
+        while True:
+            url, depth = await self.queue.get()
+            if url in self.visited or self.stats["total_pages"] >= self.max_pages:
+                self.queue.task_done()
                 continue
+                
             self.visited.add(url)
+            logger.info(f"Обработка {url} (глубина {depth})")
+            new_links = await self.process_page(url, depth)
             
-            # Парсинг страницы
-            result = self.parse_page(url)
-            if not result:
-                continue
-            parsed_content, raw_html = result
+            for link, new_depth in new_links:
+                if link not in self.visited and self.stats["total_pages"] < self.max_pages:
+                    await self.queue.put((link, new_depth))
             
-            # Обновление статистики
-            self.stats["total_pages"] += 1
-            self.stats["internal_pages"] += 1
-            
-            # Извлечение ссылок
-            soup = BeautifulSoup(raw_html, 'lxml')
-            new_links = self.extract_links(soup, url)
-            for link in new_links:
-                if link not in self.visited and link not in self.queue:
-                    self.queue.append(link)
+            self.queue.task_done()
+
+    async def crawl(self):
+        await self.queue.put((self.start_url, 0))
+        tasks = [asyncio.create_task(self.worker()) for _ in range(self.concurrency)]
         
-        # Конвертация множеств в списки
-        self.stats["subdomains"] = list(self.stats["subdomains"])
-        self.stats["external_links"] = list(self.stats["external_links"])
-        self.stats["file_links"] = list(self.stats["file_links"])
-        return self.stats
+        await self.queue.join()
+        
+        for task in tasks:
+            task.cancel()
+        
+        return {
+            "total_pages": self.stats["total_pages"],
+            "total_links": self.stats["total_links"],
+            "internal_pages": self.stats["internal_pages"],
+            "broken_pages": self.stats["broken_pages"],
+            "subdomains": list(self.stats["subdomains"]),
+            "external_links": {
+                "total": self.stats["external_links"]["total"],
+                "unique": list(self.stats["external_links"]["unique"])
+            },
+            "files": {
+                "total": self.stats["files"]["total"],
+                "pdf": self.stats["files"]["pdf"],
+                "doc": self.stats["files"]["doc"],
+                "docx": self.stats["files"]["docx"],
+                "unique": list(self.stats["files"]["unique"])
+            },
+            "error_links": self.stats["error_links"]
+        }
