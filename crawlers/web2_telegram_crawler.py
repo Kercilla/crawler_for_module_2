@@ -25,7 +25,7 @@ class TelegramCrawler:
         self.query = query
         self.max_messages = max_messages
         self.delay = delay
-        self.client = TelegramClient('anon', api_id, api_hash)
+        self.client = TelegramClient('UniCrawler', api_id, api_hash)
         self.stats = {
             "total_posts": 0,
             "unique_users": set(),
