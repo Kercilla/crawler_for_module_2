@@ -2,6 +2,7 @@
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import logging
+#import re
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,19 @@ class WebPageProcessor:
 
     def _extract_full_text(self):
         try:
-            return self.soup.get_text(separator="\n", strip=True)
+            raw_text = self.soup.get_text(separator="\n", strip=True)
+            # Очищаем текст от лишних символов
+            clean_text = self._clean_text(raw_text)
+            return clean_text
         except Exception as e:
             logger.warning(f"Ошибка извлечения текста из {self.url}: {str(e)}")
             return ""
+
+    def _clean_text(self, text):
+        # Удаляем \xa0 и лишние пробелы
+        text = text.replace("\xa0", " ")
+        #text = re.sub(r"\s+", " ", text).strip()
+        return text
 
     def _extract_images(self):
         images = []

@@ -66,6 +66,15 @@ class Web1Crawler:
             return []
         
         processor = WebPageProcessor(url, html)
+
+        # Вывод первой строки спарсированного текста
+        first_line = processor.full_text.split("\n")[0] if processor.full_text else "Нет текста"
+        logger.info(f"Первая строка текста на {url}: {first_line}")
+
+        # Вывод первых нескольких ссылок
+        first_links = [link["url"] for link in processor.links[:3]] if processor.links else []
+        logger.info(f"Первые ссылки на {url}: {first_links}")
+
         self.stats["total_pages"] += 1
         self.stats["internal_pages"] += 1
         
