@@ -1,14 +1,12 @@
-# main.py
 import asyncio
-import sys
-
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
+from dotenv import load_dotenv
+import os
 import argparse
 from crawlers.web1_crawler import Web1Crawler
 from crawlers.web2_telegram_crawler import TelegramCrawler
 import logging
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,30 +32,31 @@ async def run_web1(domain, max_pages, max_depth, delay, concurrency):
         print(f"Внешние ресурсы: Общее количество: {stats['external_links']['total']}, Уникальные: {len(stats['external_links']['unique'])}")
         print(f"Файлы: {stats['files']['total']} (PDF: {stats['files']['pdf']}, DOC: {stats['files']['doc']}, DOCX: {stats['files']['docx']})")
 
-async def run_web2(api_id: int, api_hash: str, query: str, max_messages: int):
+async def run_web2(max_messages: int):
+    api_id = os.getenv("API_ID")
+    api_hash = os.getenv("API_HASH")
+    
+    if not api_id or not api_hash:
+        logging.error("API_ID или API_HASH не найдены в .env файле")
+        return
+    
     crawler = TelegramCrawler(
-        api_id=api_id,
-        api_hash=api_hash,
-        query=query,
         max_messages=max_messages
     )
     stats = await crawler.crawl()
-    crawler.generate_plot()
-    
+
     print("\n=== Статистика Telegram ===")
     print(f"Всего публикаций: {stats['total_posts']}")
-    print(f"Уникальных пользователей: {stats['unique_users']}")
-    print(f"Лайки: {stats['likes']}")
+    print(f"Уникальных групп: {stats['university']}")
     print(f"Просмотры: {stats['views']}")
     print(f"Комментарии: {stats['comments']}")
     print(f"Репосты: {stats['forwards']}")
-    print(f"Ошибок: {stats['errors']}")
     print("============================")
 
 def main():
     parser = argparse.ArgumentParser(description="Поисковый робот для Web 1.0/Web 2.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    
+
     # Web 1.0 parser
     web1_parser = subparsers.add_parser("web1", help="Запуск краулера для Web 1.0")
     web1_parser.add_argument("--domain", required=True, help="Домен для обхода (spbu.ru/msu.ru)")
@@ -68,9 +67,7 @@ def main():
 
     # Web 2.0 parser
     web2_parser = subparsers.add_parser("web2", help="Запуск краулера для Web 2.0 (Telegram)")
-    web2_parser.add_argument("--api-id", type=int, required=True, help="Telegram API ID")
-    web2_parser.add_argument("--api-hash", required=True, help="Telegram API Hash")
-    web2_parser.add_argument("--query", required=True, help="Поисковый запрос (например 'СПбГУ')")
+    #web2_parser.add_argument("--query", required=True, help="Поисковый запрос (например 'СПбГУ')")
     web2_parser.add_argument("--max-messages", type=int, default=100, help="Максимальное количество сообщений")
 
     args = parser.parse_args()
@@ -85,9 +82,6 @@ def main():
         ))
     elif args.command == "web2":
         asyncio.run(run_web2(
-            api_id=args.api_id,
-            api_hash=args.api_hash,
-            query=args.query,
             max_messages=args.max_messages
         ))
 

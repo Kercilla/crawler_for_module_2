@@ -2,7 +2,6 @@
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import logging
-#import re
 
 logger = logging.getLogger(__name__)
 

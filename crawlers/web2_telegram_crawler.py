@@ -1,16 +1,11 @@
-# crawlers/web2_telegram_crawler.py
-###################################
-# ПОКА НИЧЕГО ИЗ ЭТОГО НЕ РАБОТАЕТ
-###################################
 import asyncio
-from telethon import TelegramClient
-from telethon.errors import FloodWaitError, ChannelPrivateError
-from telethon.tl.functions.messages import SearchRequest
-from telethon.tl.types import InputMessagesFilterEmpty, MessageMediaDocument, InputPeerEmpty
-from datetime import datetime, timedelta
+from telethon.errors import FloodWaitError
+from telethon.tl.functions.messages import GetHistoryRequest
+from datetime import datetime, timedelta, timezone
 import matplotlib.pyplot as plt
 import logging
-from collections import defaultdict
+from auth import AuthManager
+import pandas as pd
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,111 +14,144 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class TelegramCrawler:
-    def __init__(self, api_id, api_hash, query, max_messages=1000, delay=0.5):
-        self.api_id = api_id
-        self.api_hash = api_hash
-        self.query = query
+    def __init__(self, max_messages=1000, delay=0.2):
+        self.df = None
         self.max_messages = max_messages
         self.delay = delay
-        self.client = TelegramClient('UniCrawler', api_id, api_hash)
+        self.auth_manager = AuthManager()
+        self.client = None
         self.stats = {
-            "total_posts": 0,
-            "unique_users": set(),
-            "likes": 0,
-            "views": 0,
-            "comments": 0,
-            "forwards": 0,
-            "daily_posts": defaultdict(int),
-            "error_count": 0
+            "university": [],
+            "messages": [],
+            "views": [],
+            "comments": [],
+            "forwards": [],
+            "date": []
         }
 
     async def start(self):
-        await self.client.start()
+        """Инициализация клиента через AuthManager"""
+        self.client = await self.auth_manager.start()
         logger.info("Успешное подключение к Telegram API")
 
-    async def search_messages(self):
+    async def find_channels(self):
+        SEARCH_KEYWORDS = {
+            'МГУ': [
+                'МГУ', 'Московский государственный университет',
+                'МГУ им. Ломоносова', 'Московский университет',
+                'MSU', 'Lomonosov Moscow State University'
+            ],
+            'СПбГУ': [
+                'СПбГУ', 'Санкт-Петербургский государственный университет',
+                'Санкт-Петербургский университет', 'СПб университет',
+                'SPbU', 'Saint Petersburg State University'
+            ]
+        }
+
         try:
-            offset_date = datetime.now()
-            while self.stats["total_posts"] < self.max_messages:
-                result = await self.client(SearchRequest(
-                    peer=InputPeerEmpty(),
-                    q=self.query,
-                    filter=InputMessagesFilterEmpty(),
-                    min_date=None,
-                    max_date=offset_date,
-                    offset_id=0,
-                    add_offset=0,
-                    limit=100,
-                    max_id=0,
-                    min_id=0,
-                    hash=0
-                ))
+            for university, names in SEARCH_KEYWORDS.items():
+                logger.info(f"Поиск каналов для {university}")
                 
-                if not result.messages:
-                    logger.info("Нет новых сообщений для обработки")
-                    break
-                    
-                for message in result.messages:
-                    await self.process_message(message)
-                    offset_date = message.date - timedelta(seconds=1)
-                    await asyncio.sleep(self.delay * 2)
-                    
+                async for dialog in self.client.iter_dialogs():
+                    #await asyncio.sleep(self.delay)  
+                    dialog_name = dialog.name.lower()
+                    if any(name.lower() in dialog_name for name in names):
+                        logger.info(f"Найден канал/группа: {dialog.name}")
+                        await self.search_messages(dialog, university)
+
+        except Exception as e:
+            logger.error(f"Ошибка поиска каналов: {str(e)}")
+
+    async def search_messages(self, dialog, university):
+        try:
+            offset_date = datetime.now(timezone.utc) - timedelta(days=60)
+            
+            result = await self.client(GetHistoryRequest(
+                peer=dialog.id,
+                offset_id=0,
+                offset_date=offset_date,
+                add_offset=0,
+                limit= self.max_messages,
+                max_id=0,
+                min_id=0,
+                hash=0
+            ))
+
+            if not result.messages:
+                logger.info("Нет новых сообщений для обработки")
+                return
+
+            for i, message in enumerate(result.messages):
+                if i >= self.max_messages:
+                    break  
+
+                await self.process_message(message, university)
+                #await asyncio.sleep(self.delay)
+
         except FloodWaitError as e:
             logger.warning(f"Flood wait: {e.seconds} секунд. Ждем...")
             await asyncio.sleep(e.seconds)
         except Exception as e:
             logger.error(f"Ошибка при поиске: {str(e)}")
-            self.stats["error_count"] += 1
 
-    async def process_message(self, message):
+    async def process_message(self, message, university):
         try:
-            if message.message and self.query.lower() in message.message.lower():
-                self.stats["total_posts"] += 1
-                self.stats["unique_users"].add(message.sender_id)
-                
-                # Собираем статистику
-                self.stats["likes"] += getattr(message, 'likes', 0) or 0
-                self.stats["views"] += getattr(message, 'views', 0) or 0
-                self.stats["forwards"] += getattr(message, 'forwards', 0) or 0
-                self.stats["daily_posts"][message.date.date()] += 1
-                
-                # Обработка комментариев (если доступно)
-                if hasattr(message, 'replies'):
-                    self.stats["comments"] += message.replies.replies
-                    
-        except ChannelPrivateError:
-            logger.warning(f"Приватный канал: {message.peer_id}")
+            self.stats["university"].append(university) 
+            self.stats['messages'].append(getattr(message, 'message', ''))
+            self.stats["views"].append(getattr(message, 'views', 0))
+            self.stats["forwards"].append(getattr(message, 'forwards', 0))
+            self.stats["date"].append(message.date)
+            
+            comments = 0
+            if hasattr(message, 'replies') and message.replies:
+                comments = getattr(message.replies, 'replies', 0)
+            self.stats["comments"].append(comments)
+
         except Exception as e:
             logger.error(f"Ошибка обработки сообщения: {str(e)}")
-            self.stats["error_count"] += 1
 
     def generate_plot(self):
-        dates = sorted(self.stats["daily_posts"].keys())
-        counts = [self.stats["daily_posts"][d] for d in dates]
+
+        self.df['date'] = pd.to_datetime(self.df['date']).dt.date
+        daily_posts = self.df.groupby(['university', 'date']).size().unstack(level=0)
         
-        plt.figure(figsize=(12, 6))
-        plt.plot(dates, counts, marker='o', linestyle='-')
-        plt.title("Количество публикаций по дням")
-        plt.xlabel("Дата")
-        plt.ylabel("Количество")
-        plt.xticks(rotation=45)
-        plt.grid(True)
+        plt.figure(figsize=(16, 10))
+        daily_posts.plot(kind='line', marker='o', linewidth=1, markersize=5)
+        plt.title('Количество публикаций по дням', fontsize=14, pad=20)
+        plt.xlabel('Дата', fontsize=10)
+        plt.ylabel('Количество публикаций', fontsize=10)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend(title='Университет', fontsize=10)
+        
+        plt.gca().xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%d.%m.%Y'))
+        plt.gcf().autofmt_xdate()  
+        
         plt.tight_layout()
-        plt.savefig("telegram_posts.png")
-        logger.info("График сохранен в telegram_posts.png")
+        plt.savefig('daily_posts.png', dpi=300, bbox_inches='tight')  
+
+    def save_to_csv(self):
+            
+            self.df = pd.DataFrame(self.stats)
+            self.df.to_csv('Telegram_posts.csv', index=False, encoding='utf-8')
+            logger.info("Данные сохранены в Telegram_posts.csv")
 
     async def crawl(self):
-        await self.start()
-        await self.search_messages()
-        await self.client.disconnect()
-        
+        try:
+            await self.start()
+            await self.find_channels()
+            self.save_to_csv()
+            self.generate_plot()
+        finally:
+            if self.client:
+                await self.auth_manager.disconnect()
+
         return {
-            "total_posts": self.stats["total_posts"],
-            "unique_users": len(self.stats["unique_users"]),
-            "likes": self.stats["likes"],
-            "views": self.stats["views"],
-            "comments": self.stats["comments"],
-            "forwards": self.stats["forwards"],
-            "daily_stats": self.stats["daily_posts"],
-            "errors": self.stats["error_count"]
+            "total_posts": len(self.df),
+            "university": self.df['university'].nunique(),
+            "views": self.df['views'].mean(),
+            "comments": self.df["comments"].mean(),
+            "forwards": self.df["forwards"].mean(),
+            "date": self.stats["date"]
         }
+
+    
