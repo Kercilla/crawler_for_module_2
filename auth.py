@@ -48,9 +48,6 @@ class AuthManager:
         except AuthKeyError as e:
             logger.error("Ошибка авторизации: неверный API_ID/API_HASH")
             raise
-        except ApiException as e:
-            logger.error(f"Ошибка API Telegram: {e}")
-            raise
         except Exception as e:
             logger.exception("Неизвестная ошибка при подключении")
             raise
