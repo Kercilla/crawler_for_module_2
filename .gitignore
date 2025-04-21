@@ -1,0 +1,4 @@
+.env
+UniCrawler.session
+.venv
+script.py

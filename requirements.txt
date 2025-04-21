@@ -1,0 +1,12 @@
+# requirements.txt
+
+# Основные зависимости
+aiohttp==3.9.3        # Асинхронные HTTP-запросы
+beautifulsoup4==4.12.3 # Парсинг HTML/XML
+telethon==1.34.0      # Работа с Telegram API
+matplotlib==3.9.1     # Генерация графиков
+pandas
+python-dotenv
+pytest
+pytest-asyncio
+pytest-mock
