@@ -8,7 +8,10 @@
 ```
 ├── crawlers                      # Папка с поисковыми роботами
   ├── web1_crawler.py             # Поисковый робот по Web 1.0
-  ├── web2_telegram_crawler.py    # Поисковый робот по Web 2.0 (Telegram)
+  ├── web2_telegram_crawler.py
+├── tests                      # Папка с тестами
+  ├── test_web1.py             # Тесты по Web 1.0
+  ├── test_web2.py             # Тесты по Web 2.0 
 ├── parsers                       # Папка с парсерами
   ├── parser_html.py              # Парсер html-страниц из первого модуля
 ├── utils
@@ -60,4 +63,11 @@ python main.py web2
 API_ID = ""
 API_HASH = ""
 PHONE_NUMBER = ""
+```
+## Тестирование
+
+Для запуска тестов перейдите в корневую директорию и выполните команду:
+
+```bash
+pytest tests/ -v  
 ```
