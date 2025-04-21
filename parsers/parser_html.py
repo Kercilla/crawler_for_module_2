@@ -58,7 +58,6 @@ class WebPageProcessor:
     def _clean_text(self, text):
         try:
             text = text.replace("\xa0", " ")
-            text = re.sub(r"\s+", " ", text).strip()
             return text
         except Exception as e:
             logger.warning(f"Ошибка очистки текста из {self.url}: {str(e)}")
