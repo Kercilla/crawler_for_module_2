@@ -21,6 +21,7 @@ class TelegramCrawler:
         self.auth_manager = AuthManager()
         self.client = None
         self.stats = {
+            "channels": [],
             "university": [],
             "messages": [],
             "views": [],
@@ -57,12 +58,12 @@ class TelegramCrawler:
                     dialog_name = dialog.name.lower()
                     if any(name.lower() in dialog_name for name in names):
                         logger.info(f"Найден канал/группа: {dialog.name}")
-                        await self.search_messages(dialog, university)
+                        await self.search_messages(dialog, dialog.name, university)
 
         except Exception as e:
             logger.error(f"Ошибка поиска каналов: {str(e)}")
 
-    async def search_messages(self, dialog, university):
+    async def search_messages(self, dialog, channel, university):
         try:
             offset_date = datetime.now(timezone.utc) - timedelta(days=60)
             
@@ -85,7 +86,7 @@ class TelegramCrawler:
                 if i >= self.max_messages:
                     break  
 
-                await self.process_message(message, university)
+                await self.process_message(message, channel, university)
                 #await asyncio.sleep(self.delay)
 
         except FloodWaitError as e:
@@ -94,9 +95,10 @@ class TelegramCrawler:
         except Exception as e:
             logger.error(f"Ошибка при поиске: {str(e)}")
 
-    async def process_message(self, message, university):
+    async def process_message(self, message, channel, university):
         try:
-            self.stats["university"].append(university) 
+            self.stats["university"].append(university)
+            self.stats["channels"].append(channel) 
             self.stats['messages'].append(getattr(message, 'message', ''))
             self.stats["views"].append(getattr(message, 'views', 0))
             self.stats["forwards"].append(getattr(message, 'forwards', 0))
@@ -147,7 +149,7 @@ class TelegramCrawler:
 
         return {
             "total_posts": len(self.df),
-            "university": self.df['university'].nunique(),
+            "channels": self.df['channels'].nunique(),
             "views": self.df['views'].mean(),
             "comments": self.df["comments"].mean(),
             "forwards": self.df["forwards"].mean(),

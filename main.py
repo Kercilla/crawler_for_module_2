@@ -47,7 +47,7 @@ async def run_web2(max_messages: int):
 
     print("\n=== Статистика Telegram ===")
     print(f"Всего публикаций: {stats['total_posts']}")
-    print(f"Уникальных групп: {stats['university']}")
+    print(f"Уникальных групп: {stats['channels']}")
     print(f"Просмотры: {stats['views']}")
     print(f"Комментарии: {stats['comments']}")
     print(f"Репосты: {stats['forwards']}")
@@ -67,7 +67,6 @@ def main():
 
     # Web 2.0 parser
     web2_parser = subparsers.add_parser("web2", help="Запуск краулера для Web 2.0 (Telegram)")
-    #web2_parser.add_argument("--query", required=True, help="Поисковый запрос (например 'СПбГУ')")
     web2_parser.add_argument("--max-messages", type=int, default=100, help="Максимальное количество сообщений")
 
     args = parser.parse_args()

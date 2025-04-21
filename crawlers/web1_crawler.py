@@ -31,6 +31,7 @@ class Web1Crawler:
         }
         self.session = None
         self.semaphore = asyncio.Semaphore(concurrency)
+        self.txt_file = "web_crawler_output.txt"
 
     async def __aenter__(self):
         connector = aiohttp.TCPConnector(use_dns_cache=False)
@@ -75,6 +76,10 @@ class Web1Crawler:
         first_links = [link["url"] for link in processor.links[:3]] if processor.links else []
         logger.info(f"Первые ссылки на {url}: {first_links}")
 
+        # Запись текста в TXT
+        if processor.full_text:
+            self._write_to_txt(url, processor.full_text)
+
         self.stats["total_pages"] += 1
         self.stats["internal_pages"] += 1
         
@@ -95,6 +100,14 @@ class Web1Crawler:
                 self._process_external_link(parsed.netloc)
 
         return new_links
+    
+    def _write_to_txt(self, url, text):
+        """Записывает URL и текст в TXT-файл."""
+        with open(self.txt_file, mode='a', encoding='utf-8') as file:
+            file.write(f"URL: {url}\n")
+            file.write("Text:\n")
+            file.write(text)
+            file.write("\n" + "-" * 80 + "\n")  # Разделитель между записями
 
     def _process_file_link(self, url):
         ext = url.split('.')[-1]
